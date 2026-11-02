@@ -183,7 +183,8 @@ public sealed record CandidateSkin
     public static CandidateSkin Default => MonochromePreset;
 
     // 内置主题：只读，应用时保留用户当前字体
-    public static IReadOnlyList<CandidateSkin> Presets => [CoralPreset, MonochromePreset];
+    public static IReadOnlyList<CandidateSkin> Presets =>
+        [CoralPreset, MonochromePreset, CoralDarkPreset, MonochromeDarkPreset];
 
     // 珊瑚红与简约黑白共用的尺寸。单独构造，避免 Default 再指回简约黑白时循环引用
     private static CandidateSkin CompactBase => new()
@@ -295,6 +296,26 @@ public sealed record CandidateSkin
             new RGBAColor(0.70, 0.70, 0.73),
             new RGBAColor(1, 1, 1, 0.85))
     };
+
+    // 珊瑚红暗色：亮/暗都用珊瑚红的暗色配色，系统亮色下也保持深色候选栏
+    private static CandidateSkin CoralDarkPreset
+    {
+        get
+        {
+            var baseSkin = CoralPreset;
+            return baseSkin with { Name = "珊瑚红·暗", Light = baseSkin.Dark, Dark = baseSkin.Dark };
+        }
+    }
+
+    // 简约黑白暗色：亮/暗都用简约黑白的暗色配色
+    private static CandidateSkin MonochromeDarkPreset
+    {
+        get
+        {
+            var baseSkin = MonochromePreset;
+            return baseSkin with { Name = "简约黑白·暗", Light = baseSkin.Dark, Dark = baseSkin.Dark };
+        }
+    }
 
     // 比较外观是否一致（忽略字体，内置主题应用时会沿用当前字体）
     public bool LooksSame(CandidateSkin other) =>
