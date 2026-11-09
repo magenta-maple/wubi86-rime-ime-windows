@@ -13,6 +13,11 @@ internal sealed class CandidateWindow : IDisposable
     private readonly LayeredPopup _popup = new(clickThrough: false);
     private CandidatePage? _page;
     private BitmapSource? _bitmap;
+    // 外观没变且这一页内容和上次一样时，不再整页栅格化。
+    private int _renderToken;
+    private int _renderedToken = -1;
+    private double _renderedScale = -1;
+    private bool _renderedDark;
     private double _outsetPx;
     private List<Int32Rect> _hitRects = [];
     private Native.RECT _caret;
@@ -41,19 +46,29 @@ internal sealed class CandidateWindow : IDisposable
 
     public void Show(CandidatePage page)
     {
+        var (_, scale) = Native.MonitorAt(_caret.Left, _caret.Bottom);
+        var dark = SkinMedia.SystemIsDark;
+        var same = _popup.Visible
+            && _bitmap != null
+            && _page != null
+            && _renderToken == _renderedToken
+            && scale == _renderedScale
+            && dark == _renderedDark
+            && SamePage(_page, page);
         _page = page;
         if (AppearancePrefs.DisplayMode == CandidateDisplayMode.Hidden || page.Texts.Count == 0)
         {
             Hide();
             return;
         }
-        Render();
+        if (!same) Render();
         Place();
     }
 
     // 外观变化后按当前页重画
     public void Refresh()
     {
+        _renderToken++;
         if (_popup.Visible && _page != null) Show(_page);
     }
 
@@ -72,6 +87,9 @@ internal sealed class CandidateWindow : IDisposable
         var colors = skin.ColorsFor(SkinMedia.SystemIsDark);
         var result = CandidateBarRenderer.Build(skin, colors, _page.Texts, _page.Codes, _page.Comments, CandidateBarOptions.Current, true, scale);
         _bitmap = CandidateBarRenderer.Rasterize(result.Root, result.Size, scale);
+        _renderedToken = _renderToken;
+        _renderedScale = scale;
+        _renderedDark = SkinMedia.SystemIsDark;
         _outsetPx = result.ShadowOutset * scale;
         _hitRects = result.HitRects
             .Select(r => new Int32Rect((int)(r.X * scale), (int)(r.Y * scale), (int)Math.Ceiling(r.Width * scale), (int)Math.Ceiling(r.Height * scale)))
@@ -98,6 +116,12 @@ internal sealed class CandidateWindow : IDisposable
         y = Math.Max(y, work.Top - _outsetPx);
         _popup.Present(_bitmap, (int)Math.Round(x), (int)Math.Round(y));
     }
+
+    private static bool SamePage(CandidatePage a, CandidatePage b) =>
+        a.Highlighted == b.Highlighted
+        && a.Texts.SequenceEqual(b.Texts)
+        && a.Codes.SequenceEqual(b.Codes)
+        && a.Comments.SequenceEqual(b.Comments);
 
     private int HitTest(int x, int y)
     {

@@ -49,6 +49,9 @@ public sealed class DictLexiconIndex
     private Dictionary<string, List<DictLexiconHit>> _byCode = new();
     private Dictionary<string, List<DictLexiconHit>> _byText = new();
     private string _stamp = "";
+    // 主词库没改时沿用上次解析出的导入列表，避免每次按键把整份码表读进内存。
+    private List<string> _cachedFiles = [];
+    private string _cachedMainStamp = "";
     private readonly object _lock = new();
 
     // 造词或删词后丢弃缓存，下次查询按文件重新读
@@ -250,12 +253,21 @@ public sealed class DictLexiconIndex
 
     private void ReloadIfNeeded()
     {
-        var files = LexiconFiles();
-        var next = string.Join("\n", files.Select(f =>
+        var dir = RimeResourceDeployer.ResolveUserDataDir();
+        var main = Path.Combine(dir, WubiDictEncoder.SelectedMainDictName);
+        var mainStamp = FileStamp(main);
+        List<string> files;
+        if (mainStamp == _cachedMainStamp)
         {
-            var info = new FileInfo(f);
-            return $"{f}|{(info.Exists ? info.LastWriteTimeUtc.Ticks : 0)}|{(info.Exists ? info.Length : 0)}";
-        }));
+            files = _cachedFiles;
+        }
+        else
+        {
+            files = LexiconFiles(dir, main);
+            _cachedFiles = files;
+            _cachedMainStamp = mainStamp;
+        }
+        var next = string.Join("\n", files.Select(FileStamp));
         if (next == _stamp) return;
         var codes = new Dictionary<string, List<DictLexiconHit>>();
         var texts = new Dictionary<string, List<DictLexiconHit>>();
@@ -265,36 +277,45 @@ public sealed class DictLexiconIndex
         _stamp = next;
     }
 
-    // 主词库加上它 import_tables 里列出的码表
-    private static List<string> LexiconFiles()
+    private static string FileStamp(string path)
     {
-        var dir = RimeResourceDeployer.ResolveUserDataDir();
-        var main = Path.Combine(dir, WubiDictEncoder.SelectedMainDictName);
+        var info = new FileInfo(path);
+        return $"{path}|{(info.Exists ? info.LastWriteTimeUtc.Ticks : 0)}|{(info.Exists ? info.Length : 0)}";
+    }
+
+    // 主词库加上它 import_tables 里列出的码表。只读到导入段结束，不把词条正文读进来。
+    private static List<string> LexiconFiles(string dir, string main)
+    {
         var list = new List<string>();
         if (!File.Exists(main)) return list;
         list.Add(main);
-        string text;
-        try { text = File.ReadAllText(main, Encoding.UTF8); } catch { return list; }
         var inImport = false;
-        foreach (var raw in text.Split('\n'))
+        try
         {
-            var trimmed = raw.Trim(' ', '\t', '\r');
-            if (trimmed == "...") break;
-            if (trimmed.StartsWith("import_tables:", StringComparison.Ordinal))
+            foreach (var raw in File.ReadLines(main, Encoding.UTF8))
             {
-                inImport = true;
-                continue;
+                var trimmed = raw.Trim(' ', '\t', '\r');
+                if (trimmed == "...") break;
+                if (trimmed.StartsWith("import_tables:", StringComparison.Ordinal))
+                {
+                    inImport = true;
+                    continue;
+                }
+                if (!inImport) continue;
+                if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
+                if (!trimmed.StartsWith('-')) break;
+                var name = trimmed.TrimStart('-').Trim(' ', '\t');
+                var hash = name.IndexOf('#');
+                if (hash >= 0) name = name[..hash].Trim(' ', '\t');
+                if (name.Length == 0) continue;
+                var file = name.EndsWith(".dict.yaml", StringComparison.Ordinal) ? name : name + ".dict.yaml";
+                var path = Path.Combine(dir, file);
+                if (File.Exists(path) && !list.Contains(path)) list.Add(path);
             }
-            if (!inImport) continue;
-            if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
-            if (!trimmed.StartsWith('-')) break;
-            var name = trimmed.TrimStart('-').Trim(' ', '\t');
-            var hash = name.IndexOf('#');
-            if (hash >= 0) name = name[..hash].Trim(' ', '\t');
-            if (name.Length == 0) continue;
-            var file = name.EndsWith(".dict.yaml", StringComparison.Ordinal) ? name : name + ".dict.yaml";
-            var path = Path.Combine(dir, file);
-            if (File.Exists(path) && !list.Contains(path)) list.Add(path);
+        }
+        catch
+        {
+            return list;
         }
         return list;
     }

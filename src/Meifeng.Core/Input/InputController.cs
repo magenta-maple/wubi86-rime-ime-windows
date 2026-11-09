@@ -302,12 +302,15 @@ public sealed class InputController
         // 预置候选不在 Rime 菜单里，选词 / 翻页键需自行处理
         if (!_asciiMode && HandleSpecialCandidateKey(key) is { } specialHandled) return specialHandled;
 
-        // 数字选词
-        var snap = _engine.Snapshot(peekOnly: true);
-        if (snap is { IsComposing: true } && key.FirstChar is char ch && ch >= '1' && ch <= '9' && !key.Has(KeyMods.Control) && !key.Has(KeyMods.Alt))
+        // 数字选词。只有 1–9 才取上下文，字母键不再为了这次判断问一遍 librime。
+        if (key.FirstChar is char ch && ch >= '1' && ch <= '9' && !key.Has(KeyMods.Control) && !key.Has(KeyMods.Alt))
         {
-            var idx = ch - '1';
-            if (idx < snap.Candidates.Count) return SelectCandidate(idx);
+            var snap = _engine.Snapshot(peekOnly: true);
+            if (snap is { IsComposing: true })
+            {
+                var idx = ch - '1';
+                if (idx < snap.Candidates.Count) return SelectCandidate(idx);
+            }
         }
 
         if (_asciiMode)
@@ -325,8 +328,7 @@ public sealed class InputController
         var handled = _engine.ProcessKey(mapped.Value.KeyCode, mapped.Value.Modifiers);
         if (handled)
         {
-            ApplyEmptyCodeClear();
-            ApplyUniqueFourCodeSelect();
+            ApplyFourCodePolicies();
             return ConsumeRimeUpdate();
         }
         if (_engine.Snapshot(peekOnly: true)?.IsComposing == true) return true;
@@ -616,34 +618,28 @@ public sealed class InputController
         _specialPage = 0;
     }
 
-    // 空码清空：四码打完仍没有候选时清空编码
-    private void ApplyEmptyCodeClear()
+    // 空码清空、四码唯一都只在打满四码时发生，共用一次上下文。
+    // 前三码用原始输入就能排除，不必先取候选。
+    private void ApplyFourCodePolicies()
     {
-        if (!BehaviorPrefs.EmptyCodeClear) return;
-        var snap = _engine.Snapshot(peekOnly: true);
-        if (snap is not { IsComposing: true } || snap.Preedit is not { } preedit) return;
-        if (!IsFullFourCode(CodeOf(preedit)) || snap.Candidates.Count > 0) return;
-        if (DateTimeCandidates.CandidatesFor(preedit) != null) return;
-        _engine.ClearComposition();
-    }
-
-    // 四码唯一：打满四码且整表只有一个候选时上屏第一项
-    private void ApplyUniqueFourCodeSelect()
-    {
-        if (!BehaviorPrefs.AutoSelectUniqueFourCode) return;
-        var snap = _engine.Snapshot(peekOnly: true);
-        if (snap is not { IsComposing: true } || snap.Preedit is not { } preedit) return;
-        if (!IsFullFourCode(CodeOf(preedit))) return;
-        if (DateTimeCandidates.CandidatesFor(preedit) != null) return;
-        if (_engine.AllCandidateTexts().Count != 1) return;
-        _engine.SelectCandidateOnPage(0);
-    }
-
-    // 当前实际输入的编码。RawInput 在反查时仍带 z，Preedit 可能已被格式化，以 RawInput 为准
-    private string CodeOf(string preedit)
-    {
+        var clear = BehaviorPrefs.EmptyCodeClear;
+        var unique = BehaviorPrefs.AutoSelectUniqueFourCode;
+        if (!clear && !unique) return;
         var typed = _engine.RawInput();
-        return string.IsNullOrEmpty(typed) ? preedit : typed;
+        if (typed.Length > 0 && !IsFullFourCode(typed)) return;
+        var snap = _engine.Snapshot(peekOnly: true);
+        if (snap is not { IsComposing: true }) return;
+        var preedit = snap.Preedit ?? "";
+        var code = typed.Length == 0 ? preedit : typed;
+        if (!IsFullFourCode(code)) return;
+        if (DateTimeCandidates.CandidatesFor(preedit) != null) return;
+        if (clear && snap.Candidates.Count == 0)
+        {
+            _engine.ClearComposition();
+            return;
+        }
+        if (!unique || _engine.CandidateCountUpTo(2) != 1) return;
+        _engine.SelectCandidateOnPage(0);
     }
 
     private static bool IsLetter(char c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
@@ -927,8 +923,8 @@ public sealed class InputController
 
     private void FlushReloadIfIdle()
     {
-        if (_engine.Snapshot(peekOnly: true)?.IsComposing == true) return;
         if (!UserDictWriter.PeekNeedsDeploy()) return;
+        if (_engine.Snapshot(peekOnly: true)?.IsComposing == true) return;
         _engine.ReloadUserDictionary();
     }
 

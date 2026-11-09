@@ -50,9 +50,20 @@ public sealed unsafe class RimeEngine
         }
     }
 
+    // 词库表已经确认存在时，按键过程不再每次检查文件。停掉引擎后重新确认。
+    private static bool _buildPresent;
+
     // 是否缺少编译产物，需要全量 deploy
-    private static bool NeedsFullBuild =>
-        !File.Exists(Path.Combine(RimeResourceDeployer.ResolveUserDataDir(), "build", "wubi86_jidian.table.bin"));
+    private static bool NeedsFullBuild
+    {
+        get
+        {
+            if (_buildPresent) return false;
+            var exists = File.Exists(Path.Combine(RimeResourceDeployer.ResolveUserDataDir(), "build", "wubi86_jidian.table.bin"));
+            if (exists) _buildPresent = true;
+            return !exists;
+        }
+    }
 
     // 确保会话可用；有部署标记且不在编码中时先增量部署
     public bool EnsureStarted(bool forceFullCheck = false)
@@ -62,17 +73,22 @@ public sealed unsafe class RimeEngine
             var force = forceFullCheck || NeedsFullBuild;
             if (Started && _session != 0)
             {
-                // 正在打字时先不部署，避免清掉当前编码。标记留到编码结束
-                var composing = Snapshot(peekOnly: true)?.IsComposing == true;
-                if (!composing && (UserDictWriter.ConsumeNeedsDeploy() || NeedsFullBuild))
+                // 正在打字时先不部署，避免清掉当前编码。标记留到编码结束。
+                // 没有待部署标记时不问 librime，避免每次按键都取一遍上下文。
+                if (UserDictWriter.PeekNeedsDeploy() || NeedsFullBuild)
                 {
-                    if (!Redeploy())
+                    var composing = Snapshot(peekOnly: true)?.IsComposing == true;
+                    if (!composing && (UserDictWriter.ConsumeNeedsDeploy() || NeedsFullBuild))
                     {
-                        Started = false;
-                        return StartLocked(force);
+                        if (!Redeploy())
+                        {
+                            Started = false;
+                            _buildPresent = false;
+                            return StartLocked(force);
+                        }
+                        UserDictAutoSync.NoteEngineDidReload();
+                        Reloaded?.Invoke();
                     }
-                    UserDictAutoSync.NoteEngineDidReload();
-                    Reloaded?.Invoke();
                 }
                 return true;
             }
@@ -114,8 +130,8 @@ public sealed unsafe class RimeEngine
         lock (Lock)
         {
             if (!Started) return;
-            if (Snapshot(peekOnly: true)?.IsComposing == true) return;
             if (!UserDictWriter.PeekNeedsDeploy()) return;
+            if (Snapshot(peekOnly: true)?.IsComposing == true) return;
             ReloadUserDictionary();
         }
     }
@@ -203,6 +219,7 @@ public sealed unsafe class RimeEngine
         _session = 0;
         _apiStarted = false;
         Started = false;
+        _buildPresent = false;
     }
 
     // 外部已经 finalize 全局 API，这里只丢掉失效会话
@@ -211,6 +228,7 @@ public sealed unsafe class RimeEngine
         _session = 0;
         _apiStarted = false;
         Started = false;
+        _buildPresent = false;
     }
 
     // 增量部署后重建会话，不删 build
@@ -308,6 +326,26 @@ public sealed unsafe class RimeEngine
         }
         api->candidate_list_end(&it);
         return list;
+    }
+
+    // 最多数到 limit 条。四码唯一只需要知道是不是恰好一条，不必把整表拉出来。
+    public int CandidateCountUpTo(int limit)
+    {
+        if (limit <= 0 || !Started || _session == 0) return 0;
+        var api = Api;
+        if (api->candidate_list_begin == null)
+        {
+            return Math.Min(limit, Snapshot(peekOnly: true)?.Candidates.Count ?? 0);
+        }
+        RimeCandidateListIterator it = default;
+        if (api->candidate_list_begin(_session, &it) == 0)
+        {
+            return Math.Min(limit, Snapshot(peekOnly: true)?.Candidates.Count ?? 0);
+        }
+        var count = 0;
+        while (count < limit && api->candidate_list_next(&it) != 0) count++;
+        api->candidate_list_end(&it);
+        return count;
     }
 
     // 读取当前状态；peekOnly 为 true 时不取待上屏文字（不清空 commit）
