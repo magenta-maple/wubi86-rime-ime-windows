@@ -20,6 +20,8 @@ AppPublisherURL=https://github.com/KyleBing
 DefaultDirName={autopf}\MeifengWubi
 DefaultGroupName=玫枫五笔
 DisableProgramGroupPage=yes
+DisableWelcomePage=no
+DisableReadyPage=no
 OutputDir=..\out
 ; 固定文件名，避免 1.1.7-beta 这类预发布号被 Inno 判为非法 OutputBaseFilename
 OutputBaseFilename=MeifengWubi-setup
@@ -147,30 +149,58 @@ begin
   Result := False;
 end;
 
-function DownloadDotNetInstaller: Boolean;
+function OnDotnetDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
 begin
-  Result := False;
-  if DotnetDownloadPage = nil then
-    DotnetDownloadPage := CreateDownloadPage(
-      '下载运行环境',
-      '正在从微软官网下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，请稍候，不要关闭此窗口。',
-      nil);
-  DotnetDownloadPage.Clear;
-  DotnetDownloadPage.Add(DotnetDesktopUrl, 'windowsdesktop-runtime-win-x64.exe', '');
-  DotnetDownloadPage.Show;
-  try
+  Result := True;
+end;
+
+function DownloadedInstallerOk(const Path: String): Boolean;
+var
+  Size: Integer;
+begin
+  Result := FileExists(Path) and FileSize(Path, Size) and (Size > 1000000);
+end;
+
+function DownloadDotNetInstaller: Boolean;
+var
+  Dest: String;
+begin
+  Dest := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
+  Result := DownloadedInstallerOk(Dest);
+  if Result then
+    Exit;
+
+  // 向导还在时用带进度的下载页（PrepareToInstall 里不能用这个）
+  if WizardForm <> nil then
+  begin
+    if DotnetDownloadPage = nil then
+      DotnetDownloadPage := CreateDownloadPage(
+        '下载运行环境',
+        '正在从微软官网下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时。请等待下载和安装完成，然后再安装玫枫五笔。',
+        nil);
+    DotnetDownloadPage.Clear;
+    DotnetDownloadPage.Add(DotnetDesktopUrl, 'windowsdesktop-runtime-win-x64.exe', '');
+    DotnetDownloadPage.Show;
     try
-      DotnetDownloadPage.Download;
-      Result := True;
-    except
-      if DotnetDownloadPage.AbortedByUser then
-        Log('用户取消了 .NET 运行时下载')
-      else
-        Log('下载 .NET 桌面运行时失败');
+      try
+        DotnetDownloadPage.Download;
+      except
+        Log('下载页失败，改用后台下载');
+      end;
+    finally
+      DotnetDownloadPage.Hide;
     end;
-  finally
-    DotnetDownloadPage.Hide;
+    Result := DownloadedInstallerOk(Dest);
+    if Result then
+      Exit;
   end;
+
+  try
+    DownloadTemporaryFile(DotnetDesktopUrl, 'windowsdesktop-runtime-win-x64.exe', '', @OnDotnetDownloadProgress);
+  except
+    Log('DownloadTemporaryFile 失败');
+  end;
+  Result := DownloadedInstallerOk(Dest);
 end;
 
 function InstallDotNetDesktop: Boolean;
@@ -194,32 +224,17 @@ begin
   Result := WaitForDotNetDesktop;
 end;
 
-function DownloadedInstallerOk(const Path: String): Boolean;
-var
-  Size: Integer;
-begin
-  Result := FileExists(Path) and FileSize(Path, Size) and (Size > 1000000);
-end;
-
 function EnsureDotNetDesktopNow: Boolean;
-var
-  Installer: String;
 begin
   Result := HasDotNetDesktop;
   if Result then
-    Exit;
-  Log('未检测到完整的 .NET 10 桌面运行时，开始下载安装');
-  Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
-  if not DownloadedInstallerOk(Installer) then
   begin
-    if not DownloadDotNetInstaller then
-      Exit;
-    if not DownloadedInstallerOk(Installer) then
-    begin
-      Log('下载的运行时安装包无效');
-      Exit;
-    end;
+    Log('.NET 10 桌面运行时已就绪，跳过下载');
+    Exit;
   end;
+  Log('未检测到完整的 .NET 10 桌面运行时，开始下载安装');
+  if not DownloadDotNetInstaller then
+    Exit;
   if not InstallDotNetDesktop then
     Exit;
   Result := HasDotNetDesktop;
@@ -228,21 +243,30 @@ end;
 procedure InitializeWizard;
 begin
   WizardForm.WelcomeLabel2.Caption :=
-    WizardForm.WelcomeLabel2.Caption + #13#10#13#10 +
-    '点「下一步」后，若本机还没有微软 .NET 10 桌面运行时，会先自动下载并安装，装好后再继续安装玫枫五笔。请保持网络畅通，不要关闭窗口。';
+    '本向导会安装玫枫五笔输入法。' + #13#10#13#10 +
+    '点到「安装」时，会先检查本机有没有微软 .NET 10 桌面运行时：没有就自动下载安装，装好后再复制输入法文件。' + #13#10#13#10 +
+    '请保持网络畅通，下载期间不要关闭窗口，也不用自己去微软网站。';
+end;
+
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result := '即将进行：' + NewLine +
+    '1. 若没有 .NET 10 桌面运行时，先自动下载并安装' + NewLine +
+    '2. 运行时装好后，再安装玫枫五笔输入法' + NewLine + NewLine +
+    MemoDirInfo;
+  if MemoTasksInfo <> '' then
+    Result := Result + NewLine + NewLine + MemoTasksInfo;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  // 欢迎页点下一步：先把运行时装好，成功后才进入输入法安装步骤
-  if CurPageID = wpWelcome then
+  // 准备安装页的「安装」按钮：必须先装好运行时，才能复制输入法
+  if CurPageID = wpReady then
   begin
-    if HasDotNetDesktop then
-      Exit;
     Result := EnsureDotNetDesktopNow;
     if not Result then
-      MsgBox('需要先安装微软 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时才能安装玫枫五笔。请保持网络畅通，不要关闭窗口，然后再次点「下一步」。安装程序会自动下载，你不必自己去微软网站。', mbError, MB_OK);
+      MsgBox('还没有装好微软 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，不能安装输入法。请保持网络畅通后再次点「安装」。安装程序会自动下载，你不必自己去微软网站。', mbError, MB_OK);
   end;
 end;
 
@@ -283,6 +307,12 @@ begin
   Result := '';
   if HasDotNetDesktop then
     Exit;
-  if not EnsureDotNetDesktopNow then
-    Result := '还没有装好 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，不能安装玫枫五笔。请保持网络畅通后重新运行本安装程序。';
+  // 这里不能用下载向导页，只用 DownloadTemporaryFile
+  try
+    DownloadTemporaryFile(DotnetDesktopUrl, 'windowsdesktop-runtime-win-x64.exe', '', @OnDotnetDownloadProgress);
+  except
+    Log('PrepareToInstall 下载失败');
+  end;
+  if not InstallDotNetDesktop then
+    Result := '还没有装好 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，不能安装输入法。请保持网络畅通后重新运行本安装程序，点「安装」后会自动下载。';
 end;
