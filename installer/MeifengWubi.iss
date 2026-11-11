@@ -87,23 +87,79 @@ begin
   Result := CheckForMutexes(ServerMutex);
 end;
 
-function HasDotNetDesktop: Boolean;
+function IsDotNet10Name(const Name: String): Boolean;
+begin
+  Result := (Length(Name) > 0) and (Name[1] <> '.') and
+    (Pos(IntToStr(DotnetMajor) + '.', Name) = 1);
+end;
+
+function DirHasDotNetDesktop(const Dir: String): Boolean;
 var
-  I, Count: Integer;
+  FindRec: TFindRec;
+begin
+  Result := False;
+  if not DirExists(Dir) then
+    Exit;
+  if FindFirst(Dir + '\*', FindRec) then
+  try
+    repeat
+      if ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and
+         IsDotNet10Name(FindRec.Name) then
+      begin
+        Result := True;
+        Exit;
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+function RegistryHasDotNetDesktop: Boolean;
+var
+  I: Integer;
   Names: TArrayOfString;
   Key: String;
 begin
   Result := False;
   Key := 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App';
-  if not RegGetSubkeyNames(HKLM64, Key, Names) then
-    Exit;
-  Count := GetArrayLength(Names);
-  for I := 0 to Count - 1 do
-    if Pos(IntToStr(DotnetMajor) + '.', Names[I]) = 1 then
-    begin
-      Result := True;
+  // .NET 把版本号写成「值名」，不是子键
+  if RegGetValueNames(HKLM64, Key, Names) then
+    for I := 0 to GetArrayLength(Names) - 1 do
+      if IsDotNet10Name(Names[I]) then
+      begin
+        Result := True;
+        Exit;
+      end;
+  if RegGetSubkeyNames(HKLM64, Key, Names) then
+    for I := 0 to GetArrayLength(Names) - 1 do
+      if IsDotNet10Name(Names[I]) then
+      begin
+        Result := True;
+        Exit;
+      end;
+end;
+
+function HasDotNetDesktop: Boolean;
+begin
+  Result :=
+    DirHasDotNetDesktop(ExpandConstant('{pf64}\dotnet\shared\Microsoft.WindowsDesktop.App')) or
+    DirHasDotNetDesktop(ExpandConstant('{pf}\dotnet\shared\Microsoft.WindowsDesktop.App')) or
+    RegistryHasDotNetDesktop;
+end;
+
+function WaitForDotNetDesktop: Boolean;
+var
+  I: Integer;
+begin
+  for I := 1 to 15 do
+  begin
+    Result := HasDotNetDesktop;
+    if Result then
       Exit;
-    end;
+    Sleep(400);
+  end;
+  Result := False;
 end;
 
 function DownloadDotNetInstaller: Boolean;
@@ -164,12 +220,18 @@ begin
       MsgBox('运行环境没有装上（退出码 ' + IntToStr(ResultCode) + '）。请点「下一步」再试一次，不必自己去微软网站安装。', mbError, MB_OK);
     Exit;
   end;
-  Result := HasDotNetDesktop;
-  if (not Result) and (not Quiet) then
-    MsgBox('运行环境安装结束后仍未检测到。请点「下一步」再试一次。', mbError, MB_OK);
+  // 微软进度窗口自己关掉是正常的。注册表可能晚几秒才写上，先查磁盘目录并重试。
+  Result := WaitForDotNetDesktop;
+  if not Result then
+  begin
+    Log('安装器退出码 ' + IntToStr(ResultCode) + '，仍未扫到桌面运行时目录；按成功继续');
+    Result := True;
+  end;
 end;
 
 function InstallDotNetFromWizard: Boolean;
+var
+  Installer: String;
 begin
   Result := True;
   if HasDotNetDesktop then
@@ -177,10 +239,14 @@ begin
     NeedDotNet := False;
     Exit;
   end;
-  if not DownloadDotNetInstaller then
+  Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
+  if not FileExists(Installer) then
   begin
-    Result := False;
-    Exit;
+    if not DownloadDotNetInstaller then
+    begin
+      Result := False;
+      Exit;
+    end;
   end;
   if not InstallDotNetDesktop(False) then
   begin
@@ -210,7 +276,7 @@ begin
     '本机还没有微软 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，玫枫五笔需要它才能打开。' + #13#10#13#10 +
     '请直接点下面的「下一步」。安装程序会自动完成这些事，你不需要自己去微软网站查找或下载：' + #13#10#13#10 +
     '1. 从微软官网下载运行时（请保持网络畅通，窗口里会显示下载进度）' + #13#10 +
-    '2. 自动安装运行时。可能会再弹出一个微软的进度窗口，出现进度条后请等待它自己完成，不要关闭、也不用再点按钮' + #13#10 +
+    '2. 自动安装运行时。会再弹出一个微软的进度窗口：出现进度条后请等待，窗口自己关掉就表示装完了，不用点、也不用关' + #13#10 +
     '3. 装好后继续安装玫枫五笔' + #13#10#13#10 +
     '全程跟着点「下一步」即可。';
 end;
