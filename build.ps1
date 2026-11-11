@@ -22,6 +22,10 @@ dotnet publish (Join-Path $root "src/MeifengWubi/MeifengWubi.csproj") `
     -c $Configuration -r win-x64 --self-contained false `
     -p:DebugType=none -o $out
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败" }
+# 框架依赖发布若带上 hostfxr，安装后 apphost 会把 {app} 当成 .NET 根目录
+if (Test-Path (Join-Path $out "hostfxr.dll")) {
+    throw "框架依赖发布不应输出 hostfxr.dll"
+}
 
 # 3. TSF 文本服务：64 位与 32 位程序各加载对应位数的 DLL
 foreach ($platform in @("x64", "Win32")) {

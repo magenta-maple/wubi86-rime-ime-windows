@@ -47,6 +47,12 @@ Name: "chs"; MessagesFile: "ChineseSimplified.isl"
 [Tasks]
 Name: "autostart"; Description: "登录 Windows 时在后台启动玫枫五笔（推荐）"; Flags: checkedonce
 
+; 旧版自包含安装会把 hostfxr.dll 留在 {app}。框架依赖的 apphost 会优先用它，
+; 于是把「.NET location」当成安装目录，系统里已有的 .NET 10 完全用不上。
+[InstallDelete]
+Type: files; Name: "{app}\hostfxr.dll"
+Type: files; Name: "{app}\hostpolicy.dll"
+
 [Files]
 ; 服务进程被占用时改为重启后替换，而不是弹出“重试 / 跳过”
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "MeifengWubiTSF*.dll"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace uninsrestartdelete
@@ -305,6 +311,9 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopServerProcess;
   Result := '';
+  // 服务停掉后再删一遍：文件被占用时 [InstallDelete] 可能删不掉，apphost 仍会找错 .NET 目录
+  DeleteFile(ExpandConstant('{app}\hostfxr.dll'));
+  DeleteFile(ExpandConstant('{app}\hostpolicy.dll'));
   if HasDotNetDesktop then
     Exit;
   // 这里不能用下载向导页，只用 DownloadTemporaryFile
