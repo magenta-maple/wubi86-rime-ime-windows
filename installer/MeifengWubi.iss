@@ -1,5 +1,6 @@
 ; 玫枫五笔 Windows 安装包（Inno Setup 6）
-; 由 build.ps1 调用：ISCC /DAppVersion=x.y.z /DSourceDir=<out/app> installer\MeifengWubi.iss
+; 由 build.ps1 调用：ISCC /DAppVersion="x.y.z" /DSourceDir=<out/app> installer\MeifengWubi.iss
+; AppVersion 必须加引号，否则 1.1.7-beta 会被预处理器当成 1.1.7 减 beta
 
 #ifndef AppVersion
   #define AppVersion "1.0.0"

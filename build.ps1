@@ -58,7 +58,8 @@ if (-not $SkipInstaller) {
         # Windows PowerShell 5 的 Get-Command 没有 FullName，可执行文件路径在 Source
         $isccPath = if ($iscc.Source) { $iscc.Source } else { $iscc.FullName }
         $version = ([xml](Get-Content (Join-Path $root "src/MeifengWubi/MeifengWubi.csproj"))).Project.PropertyGroup.Version | Select-Object -First 1
-        & $isccPath "/DAppVersion=$version" "/DSourceDir=$out" (Join-Path $root "installer/MeifengWubi.iss")
+        # 版本号必须当字符串传给 Inno：1.1.7-beta 若不加引号会被预处理器当成减法
+        & $isccPath "/DAppVersion=`"$version`"" "/DSourceDir=`"$out`"" (Join-Path $root "installer/MeifengWubi.iss")
         if ($LASTEXITCODE -ne 0) { throw "安装包编译失败" }
     } else {
         Write-Warning "未找到 Inno Setup（ISCC.exe），跳过安装包。程序文件在 $out"
