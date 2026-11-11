@@ -81,7 +81,6 @@ var
   DotnetPage: TWizardPage;
   DotnetDownloadPage: TDownloadWizardPage;
   DotnetInfo: TNewStaticText;
-  DotnetTimer: TTimer;
   DotnetStarted: Boolean;
 
 // 服务进程是否还在运行（靠它自己创建的互斥体判断，不依赖进程枚举）
@@ -236,12 +235,10 @@ begin
   end;
 end;
 
-procedure RunDotNetSetup(Sender: TObject);
+procedure RunDotNetSetup;
 var
   Installer: String;
 begin
-  if DotnetTimer <> nil then
-    DotnetTimer.Enabled := False;
   if HasDotNetDesktop then
   begin
     FinishDotnetPage(True);
@@ -302,14 +299,7 @@ begin
   if DotnetStarted then
     Exit;
   DotnetStarted := True;
-  if DotnetTimer = nil then
-  begin
-    DotnetTimer := TTimer.Create(WizardForm);
-    DotnetTimer.Enabled := False;
-    DotnetTimer.Interval := 400;
-    DotnetTimer.OnTimer := @RunDotNetSetup;
-  end;
-  DotnetTimer.Enabled := True;
+  RunDotNetSetup;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
