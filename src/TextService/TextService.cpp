@@ -2,6 +2,7 @@
 
 #include "DisplayAttribute.h"
 #include "LangBarButton.h"
+#include "RuntimeCheck.h"
 
 #include <cstring>
 #include <shellapi.h>
@@ -379,6 +380,7 @@ void TextService::OpenServerFeature(const char* what) {
         if (pipe_.ServerPid()) AllowSetForegroundWindow(pipe_.ServerPid());
         if (Request({{"cmd", "open"}, {"what", what}}, resp)) return;
     }
+    if (!RuntimeCheck::HasDotNetDesktop10()) return;
     std::wstring exe = ModuleDirectory() + L"MeifengWubi.exe";
     ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, ModuleDirectory().c_str(), SW_SHOWNORMAL);
 }

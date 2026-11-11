@@ -220,13 +220,10 @@ begin
       MsgBox('运行环境没有装上（退出码 ' + IntToStr(ResultCode) + '）。请点「下一步」再试一次，不必自己去微软网站安装。', mbError, MB_OK);
     Exit;
   end;
-  // 微软进度窗口自己关掉是正常的。注册表可能晚几秒才写上，先查磁盘目录并重试。
+  // 微软进度窗口自己关掉是正常的。必须真的看到 10.x 目录才算装上，否则宿主会无限弹英文安装框。
   Result := WaitForDotNetDesktop;
-  if not Result then
-  begin
-    Log('安装器退出码 ' + IntToStr(ResultCode) + '，仍未扫到桌面运行时目录；按成功继续');
-    Result := True;
-  end;
+  if (not Result) and (not Quiet) then
+    MsgBox('运行环境没有装到系统目录。请确认刚才微软窗口已经自己关掉，然后点「下一步」再试一次。', mbError, MB_OK);
 end;
 
 function InstallDotNetFromWizard: Boolean;

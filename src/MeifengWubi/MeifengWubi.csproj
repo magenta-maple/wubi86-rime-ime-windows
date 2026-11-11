@@ -3,6 +3,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- 不要钉死 CI 当时的补丁号：本机装了 10.0.0 也能跑 10.0.x 打出来的程序 -->
+    <TargetLatestRuntimePatch>false</TargetLatestRuntimePatch>
+    <RollForward>LatestMinor</RollForward>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -12,7 +15,7 @@
     <RootNamespace>MeifengWubi</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\Resources\Brand\AppIcon.ico</ApplicationIcon>
-    <Version>1.1.8-beta</Version>
+    <Version>1.1.9-beta</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>玫枫五笔</Product>
     <Company>KyleBing</Company>

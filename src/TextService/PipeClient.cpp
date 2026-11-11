@@ -1,4 +1,5 @@
 #include "PipeClient.h"
+#include "RuntimeCheck.h"
 
 #include <cstring>
 
@@ -44,9 +45,17 @@ void PipeClient::Close() {
 
 // 服务进程没在运行时拉起它（后台模式，不弹设置窗口）。应用容器里的进程拉不起来，忽略失败
 void PipeClient::LaunchServer() {
+    HANDLE server = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\MeifengWubi.Server");
+    if (server) {
+        CloseHandle(server);
+        return;
+    }
     ULONGLONG now = GetTickCount64();
     if (lastLaunch_ != 0 && now - lastLaunch_ < 10000) return;
+    if (RuntimeCheck::RecentlyTriedLaunch()) return;
+    if (!RuntimeCheck::HasDotNetDesktop10()) return;
     lastLaunch_ = now;
+    RuntimeCheck::MarkTriedLaunch();
     std::wstring exe = ModuleDirectory() + L"MeifengWubi.exe";
     if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) return;
     std::wstring cmd = L"\"" + exe + L"\" --background";
