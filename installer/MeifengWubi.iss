@@ -77,11 +77,7 @@ const
 var
   // 服务进程始终没退出时为 True，用来跳过安装结束后的自动启动
   ServerStillRunning: Boolean;
-  NeedDotNet: Boolean;
-  DotnetPage: TWizardPage;
   DotnetDownloadPage: TDownloadWizardPage;
-  DotnetInfo: TNewStaticText;
-  DotnetStarted: Boolean;
 
 // 服务进程是否还在运行（靠它自己创建的互斥体判断，不依赖进程枚举）
 function IsServerRunning: Boolean;
@@ -95,18 +91,26 @@ begin
     (Pos(IntToStr(DotnetMajor) + '.', Name) = 1);
 end;
 
-function DirHasDotNetDesktop(const Dir: String): Boolean;
+function DotnetRoot: String;
+begin
+  Result := ExpandConstant('{pf64}\dotnet');
+  if not DirExists(Result) then
+    Result := ExpandConstant('{pf}\dotnet');
+end;
+
+function DirHasDotNet10Dll(const Dir, DllName: String): Boolean;
 var
   FindRec: TFindRec;
 begin
   Result := False;
   if not DirExists(Dir) then
     Exit;
-  if FindFirst(Dir + '\*', FindRec) then
+  if FindFirst(Dir + '\10.*', FindRec) then
   try
     repeat
       if ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) and
-         IsDotNet10Name(FindRec.Name) then
+         IsDotNet10Name(FindRec.Name) and
+         FileExists(Dir + '\' + FindRec.Name + '\' + DllName) then
       begin
         Result := True;
         Exit;
@@ -117,37 +121,16 @@ begin
   end;
 end;
 
-function RegistryHasDotNetDesktop: Boolean;
-var
-  I: Integer;
-  Names: TArrayOfString;
-  Key: String;
-begin
-  Result := False;
-  Key := 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App';
-  // .NET 把版本号写成「值名」，不是子键
-  if RegGetValueNames(HKLM64, Key, Names) then
-    for I := 0 to GetArrayLength(Names) - 1 do
-      if IsDotNet10Name(Names[I]) then
-      begin
-        Result := True;
-        Exit;
-      end;
-  if RegGetSubkeyNames(HKLM64, Key, Names) then
-    for I := 0 to GetArrayLength(Names) - 1 do
-      if IsDotNet10Name(Names[I]) then
-      begin
-        Result := True;
-        Exit;
-      end;
-end;
-
+// 必须同时有 hostfxr、核心运行时、WPF 桌面运行时，缺一不可（只看注册表会误判）
 function HasDotNetDesktop: Boolean;
+var
+  Root: String;
 begin
+  Root := DotnetRoot;
   Result :=
-    DirHasDotNetDesktop(ExpandConstant('{pf64}\dotnet\shared\Microsoft.WindowsDesktop.App')) or
-    DirHasDotNetDesktop(ExpandConstant('{pf}\dotnet\shared\Microsoft.WindowsDesktop.App')) or
-    RegistryHasDotNetDesktop;
+    DirHasDotNet10Dll(Root + '\host\fxr', 'hostfxr.dll') and
+    DirHasDotNet10Dll(Root + '\shared\Microsoft.NETCore.App', 'coreclr.dll') and
+    DirHasDotNet10Dll(Root + '\shared\Microsoft.WindowsDesktop.App', 'WindowsBase.dll');
 end;
 
 function WaitForDotNetDesktop: Boolean;
@@ -211,109 +194,49 @@ begin
   Result := WaitForDotNetDesktop;
 end;
 
-procedure SetDotnetInfo(const S: String);
-begin
-  if DotnetInfo <> nil then
-    DotnetInfo.Caption := S;
-end;
-
-procedure FinishDotnetPage(Success: Boolean);
-begin
-  if Success then
-  begin
-    NeedDotNet := False;
-    SetDotnetInfo('运行环境已经装好。请点「下一步」继续安装玫枫五笔。');
-    WizardForm.NextButton.Enabled := True;
-    WizardForm.BackButton.Enabled := True;
-  end
-  else
-  begin
-    SetDotnetInfo('运行环境没有装上。请检查网络后点「上一步」，再进入本页，安装程序会自动重试。你不需要自己去微软网站下载。');
-    WizardForm.NextButton.Enabled := False;
-    WizardForm.BackButton.Enabled := True;
-    DotnetStarted := False;
-  end;
-end;
-
-procedure RunDotNetSetup;
+function EnsureDotNetDesktopNow: Boolean;
 var
   Installer: String;
 begin
-  if HasDotNetDesktop then
-  begin
-    FinishDotnetPage(True);
+  Result := HasDotNetDesktop;
+  if Result then
     Exit;
-  end;
-  WizardForm.NextButton.Enabled := False;
-  WizardForm.BackButton.Enabled := False;
-  SetDotnetInfo('正在从微软官网下载运行环境，请保持网络畅通，不要关闭此窗口。下载和安装都完成后，「下一步」才会亮起。');
+  Log('未检测到完整的 .NET 10 桌面运行时，开始下载安装');
   Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
-  if not FileExists(Installer) then
+  if not FileExists(Installer) or (FileSize(Installer) < 1000000) then
   begin
     if not DownloadDotNetInstaller then
+      Exit;
+    if not FileExists(Installer) or (FileSize(Installer) < 1000000) then
     begin
-      FinishDotnetPage(False);
+      Log('下载的运行时安装包无效');
       Exit;
     end;
   end;
-  SetDotnetInfo('正在安装运行环境，请稍候，不要关闭此窗口。装好后「下一步」会亮起，再继续安装玫枫五笔。');
   if not InstallDotNetDesktop then
-  begin
-    FinishDotnetPage(False);
     Exit;
-  end;
-  FinishDotnetPage(True);
+  Result := HasDotNetDesktop;
 end;
 
 procedure InitializeWizard;
 begin
-  NeedDotNet := not HasDotNetDesktop;
-  DotnetStarted := False;
-  DotnetPage := CreateCustomPage(wpWelcome,
-    '安装运行环境',
-    '正在自动下载并安装微软组件，完成后即可继续。');
-  DotnetInfo := TNewStaticText.Create(DotnetPage);
-  DotnetInfo.Parent := DotnetPage.Surface;
-  DotnetInfo.AutoSize := False;
-  DotnetInfo.WordWrap := True;
-  DotnetInfo.Left := 0;
-  DotnetInfo.Top := 0;
-  DotnetInfo.Width := DotnetPage.SurfaceWidth;
-  DotnetInfo.Height := DotnetPage.SurfaceHeight;
-  DotnetInfo.Caption :=
-    '本机还没有微软 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时。' + #13#10#13#10 +
-    '进入本页后会自动下载并安装，你不需要自己去微软网站操作。' + #13#10#13#10 +
-    '请等待，不要关闭窗口。安装完成后「下一步」才会可用。';
-end;
-
-procedure CurPageChanged(CurPageID: Integer);
-begin
-  if (DotnetPage = nil) or (CurPageID <> DotnetPage.ID) then
-    Exit;
-  if HasDotNetDesktop then
-  begin
-    FinishDotnetPage(True);
-    Exit;
-  end;
-  WizardForm.NextButton.Enabled := False;
-  if DotnetStarted then
-    Exit;
-  DotnetStarted := True;
-  RunDotNetSetup;
-end;
-
-function ShouldSkipPage(PageID: Integer): Boolean;
-begin
-  Result := False;
-  if (DotnetPage <> nil) and (PageID = DotnetPage.ID) then
-    Result := HasDotNetDesktop;
+  WizardForm.WelcomeLabel2.Caption :=
+    WizardForm.WelcomeLabel2.Caption + #13#10#13#10 +
+    '点「下一步」后，若本机还没有微软 .NET 10 桌面运行时，会先自动下载并安装，装好后再继续安装玫枫五笔。请保持网络畅通，不要关闭窗口。';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (DotnetPage <> nil) and (CurPageID = DotnetPage.ID) then
-    Result := HasDotNetDesktop;
+  // 欢迎页点下一步：先把运行时装好，成功后才进入输入法安装步骤
+  if CurPageID = wpWelcome then
+  begin
+    if HasDotNetDesktop then
+      Exit;
+    Result := EnsureDotNetDesktopNow;
+    if not Result then
+      MsgBox('需要先安装微软 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时才能安装玫枫五笔。请保持网络畅通，不要关闭窗口，然后再次点「下一步」。安装程序会自动下载，你不必自己去微软网站。', mbError, MB_OK);
+  end;
 end;
 
 // 安装前结束旧的服务进程：exe 被锁住时覆盖会报“错误代码 5 拒绝访问”。
@@ -344,37 +267,15 @@ end;
 // 安装结束是否拉起程序：文件要等重启替换时先别启动，避免新旧文件混用
 function ShouldRunApp: Boolean;
 begin
-  Result := not ServerStillRunning;
-end;
-
-function EnsureDotNetDesktopSilent: String;
-var
-  ResultCode: Integer;
-  Installer, ScriptFile: String;
-begin
-  Result := '';
-  if HasDotNetDesktop then
-    Exit;
-  Log('静默安装：未检测到 .NET 桌面运行时，开始下载');
-  Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
-  if not FileExists(Installer) then
-  begin
-    ScriptFile := ExpandConstant('{tmp}\download-dotnet.ps1');
-    SaveStringToFile(ScriptFile,
-      'Invoke-WebRequest -UseBasicParsing -Uri "' + DotnetDesktopUrl + '" -OutFile "' + Installer + '"' + #13#10,
-      False);
-    if not Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) or (not FileExists(Installer)) then
-    begin
-      Result := '自动下载运行环境失败，请检查网络后重新运行安装程序。安装程序会代为安装，不必自己去微软网站操作。';
-      Exit;
-    end;
-  end;
-  if not InstallDotNetDesktop then
-    Result := '自动安装运行环境失败，请重新运行安装程序再试一次。';
+  Result := (not ServerStillRunning) and HasDotNetDesktop;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopServerProcess;
-  Result := EnsureDotNetDesktopSilent;
+  Result := '';
+  if HasDotNetDesktop then
+    Exit;
+  if not EnsureDotNetDesktopNow then
+    Result := '还没有装好 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，不能安装玫枫五笔。请保持网络畅通后重新运行本安装程序。';
 end;
