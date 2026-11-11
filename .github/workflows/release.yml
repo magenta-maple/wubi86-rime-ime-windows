@@ -176,17 +176,31 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           $version = "${{ steps.version.outputs.version }}"
           $title = "v$version"
-          $prerelease = $version -match '(?i)(-beta|-rc|-alpha|-preview)'
+          $isPre = $version -like '*-beta*' -or $version -like '*-rc*' -or $version -like '*-alpha*' -or $version -like '*-preview*'
           $asset = (Get-Item "dist/$env:ASSET_NAME").FullName
           $manifest = (Get-Item "dist/update.json").FullName
-          # beta 不要标 latest，避免覆盖正式版的固定下载地址
-          $mark = if ($prerelease) { @('--prerelease') } else { @('--latest') }
+          Write-Host "gh=$(gh --version | Select-Object -First 1) tag=$tag pre=$isPre"
+          $exists = $false
           gh release view $tag --json tagName *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release edit $tag --title $title --notes-file notes.md @mark
+          if ($LASTEXITCODE -eq 0) { $exists = $true }
+          if ($exists) {
+            if ($isPre) {
+              gh release edit $tag --title $title --notes-file notes.md --prerelease --latest=false
+            } else {
+              gh release edit $tag --title $title --notes-file notes.md --latest
+            }
+            if ($LASTEXITCODE -ne 0) { throw "gh release edit 失败" }
             gh release upload $tag $asset $manifest --clobber
           } else {
-            gh release create $tag $asset $manifest --title $title --notes-file notes.md @mark
+            if ($isPre) {
+              gh release create $tag $asset $manifest --title $title --notes-file notes.md --prerelease --latest=false
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "带 --latest=false 失败，改用 --prerelease"
+                gh release create $tag $asset $manifest --title $title --notes-file notes.md --prerelease
+              }
+            } else {
+              gh release create $tag $asset $manifest --title $title --notes-file notes.md --latest
+            }
           }
           if ($LASTEXITCODE -ne 0) { throw "发布 Release 失败" }
           Write-Host "已发布：https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
