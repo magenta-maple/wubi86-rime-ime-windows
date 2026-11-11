@@ -42,8 +42,7 @@ Name: "chs"; MessagesFile: "ChineseSimplified.isl"
 Name: "autostart"; Description: "登录 Windows 时在后台启动玫枫五笔（推荐）"; Flags: checkedonce
 
 [Files]
-; 运行库（clrjit.dll 等）会被正在运行的服务进程映射，被占用时改为重启后替换，
-; 而不是弹出“重试 / 跳过”的死胡同——跳过会导致新旧 dll 版本不一致
+; 服务进程被占用时改为重启后替换，而不是弹出“重试 / 跳过”
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "MeifengWubiTSF*.dll"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace uninsrestartdelete
 Source: "{#SourceDir}\MeifengWubiTSF64.dll"; DestDir: "{app}"; Flags: ignoreversion regserver 64bit restartreplace uninsrestartdelete
 Source: "{#SourceDir}\MeifengWubiTSF32.dll"; DestDir: "{app}"; Flags: ignoreversion regserver 32bit restartreplace uninsrestartdelete
@@ -67,6 +66,9 @@ const
   // 与 App.cs 里的 MutexName 保持一致：服务进程活着时互斥体一定存在
   ServerMutex = 'Local\MeifengWubi.Server';
   ServerExe = 'MeifengWubi.exe';
+  // 框架依赖发布需要系统级 .NET 10 桌面运行时（WPF），和其它程序共用
+  DotnetMajor = 10;
+  DotnetDesktopUrl = 'https://aka.ms/dotnet/10.0/windowsdesktop-runtime-win-x64.exe';
 
 var
   // 服务进程始终没退出时为 True，用来跳过安装结束后的自动启动
@@ -78,9 +80,66 @@ begin
   Result := CheckForMutexes(ServerMutex);
 end;
 
-// 安装前结束旧的服务进程：exe 及它映射的运行库 dll（clrjit.dll 等）被锁住时
-// 覆盖会报“错误代码 5 拒绝访问”。TSF 管道客户端在输入时会按需把服务重新拉起，
-// 自动更新时本进程也可能还没退干净，所以最多等 10 秒，确认进程真的退出再复制文件。
+function HasDotNetDesktop: Boolean;
+var
+  I, Count: Integer;
+  Names: TArrayOfString;
+  Key: String;
+begin
+  Result := False;
+  Key := 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App';
+  if not RegGetSubkeyNames(HKLM64, Key, Names) then
+    Exit;
+  Count := GetArrayLength(Names);
+  for I := 0 to Count - 1 do
+    if Pos(IntToStr(DotnetMajor) + '.', Names[I]) = 1 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+function EnsureDotNetDesktop: String;
+var
+  ResultCode: Integer;
+  Installer, ScriptFile: String;
+begin
+  Result := '';
+  if HasDotNetDesktop then
+  begin
+    Log('.NET ' + IntToStr(DotnetMajor) + ' 桌面运行时已安装');
+    Exit;
+  end;
+  Log('未检测到 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，开始下载');
+  WizardForm.StatusLabel.Caption := '正在下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时…';
+  Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
+  ScriptFile := ExpandConstant('{tmp}\download-dotnet.ps1');
+  SaveStringToFile(ScriptFile,
+    'Invoke-WebRequest -UseBasicParsing -Uri "' + DotnetDesktopUrl + '" -OutFile "' + Installer + '"' + #13#10,
+    False);
+  if not Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) or (not FileExists(Installer)) then
+  begin
+    Result := '下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时失败，请检查网络后重试。' + #13#10 + DotnetDesktopUrl;
+    Exit;
+  end;
+  WizardForm.StatusLabel.Caption := '正在安装 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时…';
+  if not Exec(Installer, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Result := '无法启动 .NET 桌面运行时安装程序。';
+    Exit;
+  end;
+  if (ResultCode <> 0) and (ResultCode <> 3010) then
+  begin
+    Result := '.NET 桌面运行时安装失败（退出码 ' + IntToStr(ResultCode) + '）。';
+    Exit;
+  end;
+  if not HasDotNetDesktop then
+    Result := '.NET 桌面运行时安装完成后仍未检测到，请手动安装后再打开玫枫五笔。' + #13#10 + DotnetDesktopUrl;
+end;
+
+// 安装前结束旧的服务进程：exe 被锁住时覆盖会报“错误代码 5 拒绝访问”。
+// TSF 管道客户端在输入时会按需把服务重新拉起，自动更新时本进程也可能还没退干净，
+// 所以最多等 10 秒，确认进程真的退出再复制文件。
 procedure StopServerProcess;
 var
   I, ResultCode: Integer;
@@ -112,5 +171,5 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopServerProcess;
-  Result := '';
+  Result := EnsureDotNetDesktop;
 end;

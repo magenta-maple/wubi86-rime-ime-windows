@@ -16,11 +16,11 @@ if (-not (Test-Path (Join-Path $root "third_party/librime/x64/rime.dll"))) {
     & (Join-Path $root "scripts/fetch-librime.ps1") -Arch x64
 }
 
-# 2. 服务进程：自包含发布，用户机器无需安装 .NET
+# 2. 服务进程：框架依赖发布，和系统里其它 .NET 10 程序共用桌面运行时
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 dotnet publish (Join-Path $root "src/MeifengWubi/MeifengWubi.csproj") `
-    -c $Configuration -r win-x64 --self-contained true `
-    -p:PublishReadyToRun=true -p:DebugType=none -o $out
+    -c $Configuration -r win-x64 --self-contained false `
+    -p:DebugType=none -o $out
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败" }
 
 # 3. TSF 文本服务：64 位与 32 位程序各加载对应位数的 DLL
