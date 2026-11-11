@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Meifeng.Core.Config;
@@ -19,7 +19,7 @@ internal sealed class SettingsWindow : Window
     private static SettingsWindow? _current;
 
     private readonly Dictionary<Section, FrameworkElement> _pages = [];
-    private readonly Dictionary<Section, ToggleButton> _buttons = [];
+    private readonly Dictionary<Section, Border> _buttons = [];
     private readonly Border _content = new();
     private Section _section = Section.UserLexicon;
 
@@ -146,30 +146,52 @@ internal sealed class SettingsWindow : Window
         return dock;
     }
 
-    private ToggleButton SectionButton(Section s)
+    // 侧栏项不用 Fluent ToggleButton：本地透明背景会盖掉 Checked 视觉
+    private Border SectionButton(Section s)
     {
         var icon = new TextBlock { Text = Glyph(s), FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 15, VerticalAlignment = VerticalAlignment.Center, Width = 22 };
         var title = UiKit.Label(SectionTitle(s), 13, FontWeights.Medium);
-        var b = new ToggleButton
+        var row = UiKit.HStack(6, icon, title);
+        row.VerticalAlignment = VerticalAlignment.Center;
+        var b = new Border
         {
-            Content = UiKit.HStack(6, icon, title),
-            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Child = row,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Height = 34,
             Padding = new Thickness(10, 0, 10, 0),
             Margin = new Thickness(0, 0, 0, 4),
+            CornerRadius = new CornerRadius(6),
             Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0)
+            Cursor = Cursors.Hand
         };
-        b.Click += (_, _) => ShowSection(s);
+        b.MouseLeftButtonUp += (_, _) => ShowSection(s);
+        b.MouseEnter += (_, _) =>
+        {
+            if (_section != s) b.SetResourceReference(Border.BackgroundProperty, "SubtleFillColorSecondaryBrush");
+        };
+        b.MouseLeave += (_, _) =>
+        {
+            if (_section != s) PaintNavItem(b, selected: false);
+        };
         _buttons[s] = b;
         return b;
+    }
+
+    // 选中用控件填充色，未选中保持透明（深浅色都跟主题走）
+    private static void PaintNavItem(Border b, bool selected)
+    {
+        if (selected) b.SetResourceReference(Border.BackgroundProperty, "ControlFillColorDefaultBrush");
+        else
+        {
+            b.ClearValue(Border.BackgroundProperty);
+            b.Background = Brushes.Transparent;
+        }
     }
 
     private void ShowSection(Section s)
     {
         _section = s;
-        foreach (var (key, b) in _buttons) b.IsChecked = key == s;
+        foreach (var (key, b) in _buttons) PaintNavItem(b, key == s);
         if (!_pages.TryGetValue(s, out var page))
         {
             page = s switch
