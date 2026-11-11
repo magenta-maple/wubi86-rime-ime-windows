@@ -194,6 +194,13 @@ begin
   Result := WaitForDotNetDesktop;
 end;
 
+function DownloadedInstallerOk(const Path: String): Boolean;
+var
+  Size: Integer;
+begin
+  Result := FileExists(Path) and FileSize(Path, Size) and (Size > 1000000);
+end;
+
 function EnsureDotNetDesktopNow: Boolean;
 var
   Installer: String;
@@ -203,11 +210,11 @@ begin
     Exit;
   Log('未检测到完整的 .NET 10 桌面运行时，开始下载安装');
   Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
-  if not FileExists(Installer) or (FileSize(Installer) < 1000000) then
+  if not DownloadedInstallerOk(Installer) then
   begin
     if not DownloadDotNetInstaller then
       Exit;
-    if not FileExists(Installer) or (FileSize(Installer) < 1000000) then
+    if not DownloadedInstallerOk(Installer) then
     begin
       Log('下载的运行时安装包无效');
       Exit;
