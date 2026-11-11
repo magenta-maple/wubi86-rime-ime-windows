@@ -73,6 +73,9 @@ const
 var
   // 服务进程始终没退出时为 True，用来跳过安装结束后的自动启动
   ServerStillRunning: Boolean;
+  NeedDotNet: Boolean;
+  DotnetPage: TWizardPage;
+  DotnetDownloadPage: TDownloadWizardPage;
 
 // 服务进程是否还在运行（靠它自己创建的互斥体判断，不依赖进程枚举）
 function IsServerRunning: Boolean;
@@ -99,42 +102,127 @@ begin
     end;
 end;
 
-function EnsureDotNetDesktop: String;
+function DownloadDotNetInstaller: Boolean;
+begin
+  Result := False;
+  if DotnetDownloadPage = nil then
+    DotnetDownloadPage := CreateDownloadPage(
+      '下载运行环境',
+      '正在从微软官网下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，请稍候，不要关闭此窗口。',
+      nil);
+  DotnetDownloadPage.Clear;
+  DotnetDownloadPage.Add(DotnetDesktopUrl, 'windowsdesktop-runtime-win-x64.exe', '');
+  DotnetDownloadPage.Show;
+  try
+    try
+      DotnetDownloadPage.Download;
+      Result := True;
+    except
+      if DotnetDownloadPage.AbortedByUser then
+        Log('用户取消了 .NET 运行时下载')
+      else
+        MsgBox('下载运行环境失败。请确认电脑能上网，然后点「下一步」再试一次。安装程序会自动下载，你不需要自己去微软网站操作。', mbError, MB_OK);
+    end;
+  finally
+    DotnetDownloadPage.Hide;
+  end;
+end;
+
+function InstallDotNetDesktop(Quiet: Boolean): Boolean;
 var
   ResultCode: Integer;
-  Installer, ScriptFile: String;
+  Installer, Args: String;
 begin
-  Result := '';
-  if HasDotNetDesktop then
-  begin
-    Log('.NET ' + IntToStr(DotnetMajor) + ' 桌面运行时已安装');
-    Exit;
-  end;
-  Log('未检测到 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，开始下载');
-  WizardForm.StatusLabel.Caption := '正在下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时…';
+  Result := False;
   Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
-  ScriptFile := ExpandConstant('{tmp}\download-dotnet.ps1');
-  SaveStringToFile(ScriptFile,
-    'Invoke-WebRequest -UseBasicParsing -Uri "' + DotnetDesktopUrl + '" -OutFile "' + Installer + '"' + #13#10,
-    False);
-  if not Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) or (not FileExists(Installer)) then
+  if not FileExists(Installer) then
   begin
-    Result := '下载 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时失败，请检查网络后重试。' + #13#10 + DotnetDesktopUrl;
+    if Quiet then
+      Exit;
+    MsgBox('没有找到已下载的运行环境安装包，请点「下一步」重新下载。', mbError, MB_OK);
     Exit;
   end;
-  WizardForm.StatusLabel.Caption := '正在安装 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时…';
-  if not Exec(Installer, '/install /quiet /norestart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  if Quiet then
+    Args := '/install /quiet /norestart'
+  else
+    Args := '/install /passive /norestart';
+  if WizardForm <> nil then
+    WizardForm.StatusLabel.Caption := '正在安装 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，请稍候…';
+  if not Exec(Installer, Args, '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
   begin
-    Result := '无法启动 .NET 桌面运行时安装程序。';
+    if not Quiet then
+      MsgBox('无法启动运行环境安装。请点「下一步」再试一次。', mbError, MB_OK);
     Exit;
   end;
   if (ResultCode <> 0) and (ResultCode <> 3010) then
   begin
-    Result := '.NET 桌面运行时安装失败（退出码 ' + IntToStr(ResultCode) + '）。';
+    if not Quiet then
+      MsgBox('运行环境没有装上（退出码 ' + IntToStr(ResultCode) + '）。请点「下一步」再试一次，不必自己去微软网站安装。', mbError, MB_OK);
     Exit;
   end;
-  if not HasDotNetDesktop then
-    Result := '.NET 桌面运行时安装完成后仍未检测到，请手动安装后再打开玫枫五笔。' + #13#10 + DotnetDesktopUrl;
+  Result := HasDotNetDesktop;
+  if (not Result) and (not Quiet) then
+    MsgBox('运行环境安装结束后仍未检测到。请点「下一步」再试一次。', mbError, MB_OK);
+end;
+
+function InstallDotNetFromWizard: Boolean;
+begin
+  Result := True;
+  if HasDotNetDesktop then
+  begin
+    NeedDotNet := False;
+    Exit;
+  end;
+  if not DownloadDotNetInstaller then
+  begin
+    Result := False;
+    Exit;
+  end;
+  if not InstallDotNetDesktop(False) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  NeedDotNet := False;
+end;
+
+procedure InitializeWizard;
+var
+  Info: TNewStaticText;
+begin
+  NeedDotNet := not HasDotNetDesktop;
+  DotnetPage := CreateCustomPage(wpWelcome,
+    '安装运行环境',
+    '玫枫五笔会自动安装所需组件，你只需跟着点「下一步」。');
+  Info := TNewStaticText.Create(DotnetPage);
+  Info.Parent := DotnetPage.Surface;
+  Info.AutoSize := False;
+  Info.WordWrap := True;
+  Info.Left := 0;
+  Info.Top := 0;
+  Info.Width := DotnetPage.SurfaceWidth;
+  Info.Height := DotnetPage.SurfaceHeight;
+  Info.Caption :=
+    '本机还没有微软 .NET ' + IntToStr(DotnetMajor) + ' 桌面运行时，玫枫五笔需要它才能打开。' + #13#10#13#10 +
+    '请直接点下面的「下一步」。安装程序会自动完成这些事，你不需要自己去微软网站查找或下载：' + #13#10#13#10 +
+    '1. 从微软官网下载运行时（请保持网络畅通，窗口里会显示下载进度）' + #13#10 +
+    '2. 自动安装运行时。可能会再弹出一个微软的进度窗口，出现进度条后请等待它自己完成，不要关闭、也不用再点按钮' + #13#10 +
+    '3. 装好后继续安装玫枫五笔' + #13#10#13#10 +
+    '全程跟着点「下一步」即可。';
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if (DotnetPage <> nil) and (PageID = DotnetPage.ID) then
+    Result := not NeedDotNet;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (DotnetPage <> nil) and (CurPageID = DotnetPage.ID) then
+    Result := InstallDotNetFromWizard;
 end;
 
 // 安装前结束旧的服务进程：exe 被锁住时覆盖会报“错误代码 5 拒绝访问”。
@@ -168,8 +256,34 @@ begin
   Result := not ServerStillRunning;
 end;
 
+function EnsureDotNetDesktopSilent: String;
+var
+  ResultCode: Integer;
+  Installer, ScriptFile: String;
+begin
+  Result := '';
+  if HasDotNetDesktop then
+    Exit;
+  Log('静默安装：未检测到 .NET 桌面运行时，开始下载');
+  Installer := ExpandConstant('{tmp}\windowsdesktop-runtime-win-x64.exe');
+  if not FileExists(Installer) then
+  begin
+    ScriptFile := ExpandConstant('{tmp}\download-dotnet.ps1');
+    SaveStringToFile(ScriptFile,
+      'Invoke-WebRequest -UseBasicParsing -Uri "' + DotnetDesktopUrl + '" -OutFile "' + Installer + '"' + #13#10,
+      False);
+    if not Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + ScriptFile + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) or (not FileExists(Installer)) then
+    begin
+      Result := '自动下载运行环境失败，请检查网络后重新运行安装程序。安装程序会代为安装，不必自己去微软网站操作。';
+      Exit;
+    end;
+  end;
+  if not InstallDotNetDesktop(True) then
+    Result := '自动安装运行环境失败，请重新运行安装程序再试一次。';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopServerProcess;
-  Result := EnsureDotNetDesktop;
+  Result := EnsureDotNetDesktopSilent;
 end;

@@ -138,10 +138,11 @@ jobs:
           if (-not (Test-Path $asset)) { throw "找不到安装包 $asset" }
           $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
           $repo = $env:GITHUB_REPOSITORY
+          $channel = if ($version -match '(?i)(-beta|-rc|-alpha|-preview)') { "beta" } else { "stable" }
           $manifest = [ordered]@{
             schema = 1
             platform = "windows"
-            channel = "stable"
+            channel = $channel
             version = $version
             build = 0
             published_at = (Get-Date -Format "yyyy-MM-dd")
@@ -173,15 +174,19 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
           $tag = $env:GITHUB_REF_NAME
-          $title = "v${{ steps.version.outputs.version }}"
+          $version = "${{ steps.version.outputs.version }}"
+          $title = "v$version"
+          $prerelease = $version -match '(?i)(-beta|-rc|-alpha|-preview)'
           $asset = (Get-Item "dist/$env:ASSET_NAME").FullName
           $manifest = (Get-Item "dist/update.json").FullName
+          # beta 不要标 latest，避免覆盖正式版的固定下载地址
+          $mark = if ($prerelease) { @('--prerelease') } else { @('--latest') }
           gh release view $tag --json tagName *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release edit $tag --title $title --notes-file notes.md --latest
+            gh release edit $tag --title $title --notes-file notes.md @mark
             gh release upload $tag $asset $manifest --clobber
           } else {
-            gh release create $tag $asset $manifest --title $title --notes-file notes.md --latest
+            gh release create $tag $asset $manifest --title $title --notes-file notes.md @mark
           }
           if ($LASTEXITCODE -ne 0) { throw "发布 Release 失败" }
           Write-Host "已发布：https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"

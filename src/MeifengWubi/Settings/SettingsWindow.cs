@@ -94,6 +94,14 @@ internal sealed class SettingsWindow : Window
     {
         get
         {
+            var info = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(info))
+            {
+                var plus = info.IndexOf('+');
+                if (plus >= 0) info = info[..plus];
+                return "v" + info;
+            }
             var v = Assembly.GetExecutingAssembly().GetName().Version;
             return v == null ? "v-" : $"v{v.Major}.{v.Minor}.{v.Build}";
         }
