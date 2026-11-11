@@ -61,6 +61,10 @@ if (-not $SkipInstaller) {
         # 版本号必须当字符串传给 Inno：1.1.7-beta 若不加引号会被预处理器当成减法
         & $isccPath "/DAppVersion=`"$version`"" "/DSourceDir=`"$out`"" (Join-Path $root "installer/MeifengWubi.iss")
         if ($LASTEXITCODE -ne 0) { throw "安装包编译失败" }
+        $built = Join-Path $root "out/MeifengWubi-setup.exe"
+        $named = Join-Path $root "out/MeifengWubi-$version-setup.exe"
+        if (-not (Test-Path $built)) { throw "找不到安装包 $built" }
+        Move-Item $built $named -Force
     } else {
         Write-Warning "未找到 Inno Setup（ISCC.exe），跳过安装包。程序文件在 $out"
     }

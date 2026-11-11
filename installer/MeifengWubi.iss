@@ -8,18 +8,21 @@
 #ifndef SourceDir
   #define SourceDir "..\out\app"
 #endif
+; /DAppVersion="1.1.7-beta" 时引号会进宏，文件名里不能有引号
+#define AppVer RemoveQuotes(AppVersion)
 
 [Setup]
 AppId={{55C8F83B-3F8E-46AF-BFED-5B224BB9381A}
 AppName=玫枫五笔
-AppVersion={#AppVersion}
+AppVersion={#AppVer}
 AppPublisher=KyleBing
 AppPublisherURL=https://github.com/KyleBing
 DefaultDirName={autopf}\MeifengWubi
 DefaultGroupName=玫枫五笔
 DisableProgramGroupPage=yes
 OutputDir=..\out
-OutputBaseFilename=MeifengWubi-{#AppVersion}-setup
+; 固定文件名，避免 1.1.7-beta 这类预发布号被 Inno 判为非法 OutputBaseFilename
+OutputBaseFilename=MeifengWubi-setup
 SetupIconFile=..\Resources\Brand\AppIcon.ico
 UninstallDisplayIcon={app}\MeifengWubi.exe
 Compression=lzma2/max
