@@ -1,20 +1,20 @@
 ; 玫枫五笔 Windows 安装包（Inno Setup 6）
-; 由 build.ps1 调用：ISCC /DAppVersion="x.y.z" /DSourceDir=<out/app> installer\MeifengWubi.iss
-; AppVersion 必须加引号，否则 1.1.7-beta 会被预处理器当成 1.1.7 减 beta
+; 由 build.ps1 先写出 out/version.iss（字符串宏），再：ISCC /DSourceDir=<out/app> installer\MeifengWubi.iss
 
+#ifndef AppVersion
+  #include "..\out\version.iss"
+#endif
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\out\app"
 #endif
-; /DAppVersion="1.1.7-beta" 时引号会进宏，文件名里不能有引号
-#define AppVer RemoveQuotes(AppVersion)
 
 [Setup]
 AppId={{55C8F83B-3F8E-46AF-BFED-5B224BB9381A}
 AppName=玫枫五笔
-AppVersion={#AppVer}
+AppVersion={#AppVersion}
 AppPublisher=KyleBing
 AppPublisherURL=https://github.com/KyleBing
 DefaultDirName={autopf}\MeifengWubi

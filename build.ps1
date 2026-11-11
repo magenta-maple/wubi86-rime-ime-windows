@@ -58,8 +58,10 @@ if (-not $SkipInstaller) {
         # Windows PowerShell 5 的 Get-Command 没有 FullName，可执行文件路径在 Source
         $isccPath = if ($iscc.Source) { $iscc.Source } else { $iscc.FullName }
         $version = ([xml](Get-Content (Join-Path $root "src/MeifengWubi/MeifengWubi.csproj"))).Project.PropertyGroup.Version | Select-Object -First 1
-        # 版本号必须当字符串传给 Inno：1.1.7-beta 若不加引号会被预处理器当成减法
-        & $isccPath "/DAppVersion=`"$version`"" "/DSourceDir=`"$out`"" (Join-Path $root "installer/MeifengWubi.iss")
+        # 预发布号含连字符，不能走 /DAppVersion=1.1.7-beta（Inno 会当成减法）
+        $verIss = Join-Path $root "out/version.iss"
+        Set-Content -Path $verIss -Value "#define AppVersion `"$version`"" -Encoding ascii
+        & $isccPath "/DSourceDir=$out" (Join-Path $root "installer/MeifengWubi.iss")
         if ($LASTEXITCODE -ne 0) { throw "安装包编译失败" }
         $built = Join-Path $root "out/MeifengWubi-setup.exe"
         $named = Join-Path $root "out/MeifengWubi-$version-setup.exe"
