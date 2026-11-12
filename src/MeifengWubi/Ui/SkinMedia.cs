@@ -10,18 +10,40 @@ internal static class SkinMedia
 {
     public const string DefaultFontFamily = "Microsoft YaHei UI";
 
-    // 设置页「候选字体」下拉里的常用字体（空串为系统默认）
-    public static readonly (string Name, string Title)[] PreferredFonts =
-    [
-        ("", "系统默认"),
-        ("Microsoft YaHei UI", "微软雅黑"),
-        ("DengXian", "等线"),
-        ("SimHei", "黑体"),
-        ("SimSun", "宋体"),
-        ("KaiTi", "楷体"),
-        ("FangSong", "仿宋"),
-        ("PingFang SC", "苹方")
-    ];
+    // 常用中文字体友好显示名；其余用家族 Source 名
+    private static readonly Dictionary<string, string> FriendlyFontTitles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Microsoft YaHei UI"] = "微软雅黑",
+        ["Microsoft YaHei"] = "微软雅黑",
+        ["DengXian"] = "等线",
+        ["SimHei"] = "黑体",
+        ["SimSun"] = "宋体",
+        ["NSimSun"] = "新宋体",
+        ["KaiTi"] = "楷体",
+        ["FangSong"] = "仿宋",
+        ["Microsoft JhengHei UI"] = "微软正黑体",
+        ["Microsoft JhengHei"] = "微软正黑体",
+        ["PingFang SC"] = "苹方",
+        ["Source Han Sans SC"] = "思源黑体",
+        ["Source Han Serif SC"] = "思源宋体",
+        ["Noto Sans CJK SC"] = "Noto 黑体",
+        ["Noto Serif CJK SC"] = "Noto 宋体",
+    };
+
+    private static readonly object FontChoicesGate = new();
+    private static (string Name, string Title)[]? _fontChoices;
+
+    // 设置页「候选字体」：系统默认 + 本机全部中文可用字体
+    public static (string Name, string Title)[] PreferredFonts
+    {
+        get
+        {
+            lock (FontChoicesGate)
+            {
+                return _fontChoices ??= BuildCandidateFontChoices();
+            }
+        }
+    }
 
     public static Color ToColor(this RGBAColor c)
     {
@@ -61,6 +83,99 @@ internal static class SkinMedia
         {
             return all;
         }
+    }
+
+    private static (string Name, string Title)[] BuildCandidateFontChoices()
+    {
+        var items = new List<(string Name, string Title)> { ("", "系统默认") };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "" };
+
+        IEnumerable<FontFamily> families;
+        try
+        {
+            families = Fonts.SystemFontFamilies;
+        }
+        catch
+        {
+            return items.ToArray();
+        }
+
+        foreach (var family in families.OrderBy(f => DisplayTitle(FamilyKey(f)), StringComparer.CurrentCultureIgnoreCase))
+        {
+            var name = FamilyKey(family);
+            if (string.IsNullOrWhiteSpace(name) || !seen.Add(name)) continue;
+            if (!IsChineseCapable(family)) continue;
+            items.Add((name, DisplayTitle(name)));
+        }
+
+        return items.ToArray();
+    }
+
+    private static string FamilyKey(FontFamily family)
+    {
+        try
+        {
+            // Source 是 new FontFamily(name) 期望的名字；找不到时退回英文家族名
+            if (!string.IsNullOrWhiteSpace(family.Source)) return family.Source;
+            var en = family.FamilyNames
+                .FirstOrDefault(kv => kv.Key.IetfLanguageTag.StartsWith("en", StringComparison.OrdinalIgnoreCase))
+                .Value;
+            if (!string.IsNullOrWhiteSpace(en)) return en;
+            return family.FamilyNames.Values.FirstOrDefault() ?? "";
+        }
+        catch
+        {
+            return family.Source ?? "";
+        }
+    }
+
+    private static string DisplayTitle(string name) =>
+        FriendlyFontTitles.TryGetValue(name, out var title) ? title : name;
+
+    // 能绘制「中」，或家族名像中文字体（覆盖语言标签缺失的用户字体）
+    private static bool IsChineseCapable(FontFamily family)
+    {
+        try
+        {
+            foreach (var typeface in family.GetTypefaces())
+            {
+                if (!typeface.TryGetGlyphTypeface(out var glyph) || glyph is null) continue;
+                if (glyph.CharacterToGlyphMap.ContainsKey('中')) return true;
+            }
+        }
+        catch
+        {
+            // 个别字体元数据异常时，退回名字启发
+        }
+
+        return FamilyLooksChinese(FamilyKey(family));
+    }
+
+    private static bool FamilyLooksChinese(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        if (name.Any(ch => ch is >= '\u4E00' and <= '\u9FFF' or >= '\u3400' and <= '\u4DBF'))
+            return true;
+
+        // 简繁后缀与常见中文字体商品名；避免纯拉丁/符号字体误入
+        return name.Contains("CJK", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("PingFang", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("YaHei", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("JhengHei", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("DengXian", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("SimSun", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("SimHei", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("KaiTi", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("FangSong", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("Source Han", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("Noto Sans CJK", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("Noto Serif CJK", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("WenQuanYi", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith(" SC", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith(" TC", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith(" HC", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith(" CN", StringComparison.OrdinalIgnoreCase)
+               || name.EndsWith(" GB", StringComparison.OrdinalIgnoreCase);
     }
 
     // 系统是否为深色应用模式

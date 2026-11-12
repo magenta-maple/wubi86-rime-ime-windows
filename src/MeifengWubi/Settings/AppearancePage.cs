@@ -136,8 +136,14 @@ internal sealed class AppearancePage : Grid, IDisposable
     private UIElement RegularCard()
     {
         var page = new NumberStepper(() => BehaviorPrefs.PageSize, v => BehaviorPrefs.PageSize = (int)v, 3, 9, 1, compact: false);
-        var fonts = SkinMedia.PreferredFonts;
-        var fontIndex = Math.Max(0, Array.FindIndex(fonts, f => f.Name == AppearancePrefs.Skin.FontName));
+        var fonts = SkinMedia.PreferredFonts.ToList();
+        var currentFont = AppearancePrefs.Skin.FontName;
+        // 当前已选字体若不在枚举结果里（例如已卸载），仍保留一项以免显示成「系统默认」。
+        if (!string.IsNullOrEmpty(currentFont)
+            && fonts.TrueForAll(f => !string.Equals(f.Name, currentFont, StringComparison.OrdinalIgnoreCase)))
+            fonts.Insert(1, (currentFont, currentFont));
+        var fontIndex = Math.Max(0, fonts.FindIndex(f =>
+            string.Equals(f.Name, currentFont, StringComparison.OrdinalIgnoreCase)));
         var font = UiKit.Combo(fonts.Select(f => f.Title), fontIndex, i => ChangeFont(fonts[i].Name));
 
         var orientation = UiKit.Segmented(Enum.GetValues<CandidateOrientation>().Select(o => o.Title()).ToList(),
